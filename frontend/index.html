@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oil Engineer Report Fixer</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #181b22;
+        --text: #e6e6e6;
+        --muted: #9aa0a6;
+        --accent: #4f8cff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header { padding: 16px 24px; border-bottom: 1px solid #23262d; }
+      header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+      main { padding: 24px; display: grid; gap: 24px; max-width: 1200px; margin: 0 auto; }
+      .panel {
+        background: var(--panel);
+        border: 1px solid #23262d;
+        border-radius: 8px;
+        padding: 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      label { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); }
+      input[type="text"], input[type="date"], input[type="file"] {
+        margin-top: 4px;
+        padding: 8px 10px;
+        background: #0f1115;
+        color: var(--text);
+        border: 1px solid #23262d;
+        border-radius: 6px;
+      }
+      .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+      button {
+        padding: 8px 14px;
+        background: var(--accent);
+        border: 0;
+        color: white;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+      }
+      button[disabled] { opacity: 0.5; cursor: not-allowed; }
+      button.secondary { background: #2a2f3a; }
+      #status { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; }
+      .chart { min-height: 320px; }
+      .muted { color: var(--muted); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Oil Engineer Report Fixer — скелет интерфейса</h1>
+    </header>
+    <main>
+      <section class="panel">
+        <h2 style="margin-top:0;font-size:15px;">Параметры операции</h2>
+        <div class="grid">
+          <label>
+            Дата операции
+            <input type="date" id="operation-date" />
+          </label>
+          <label>
+            Номер операции
+            <input type="text" id="operation-number" placeholder="например, 12-345" />
+          </label>
+          <label>
+            Скважина
+            <input type="text" id="well-name" placeholder="например, 100Р" />
+          </label>
+          <label>
+            Excel-отчёт
+            <input type="file" id="report-file" accept=".xlsx,.xlsm,.xls" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="btn-create">Создать сессию</button>
+          <button id="btn-upload" class="secondary" disabled>Загрузить отчёт</button>
+          <button id="btn-charts" class="secondary" disabled>Запросить графики</button>
+          <button id="btn-close" class="secondary" disabled>Закрыть сессию</button>
+        </div>
+        <p class="muted" style="margin-top:12px;">
+          На данном этапе бизнес-логика разбора Excel ещё не реализована —
+          фронтенд показывает только сценарий вызова API.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2 style="margin-top:0;font-size:15px;">Статус</h2>
+        <div id="status">сессия не создана</div>
+      </section>
+
+      <section class="panel">
+        <h2 style="margin-top:0;font-size:15px;">Графики каналов</h2>
+        <div id="charts-container" class="chart"></div>
+        <p class="muted">
+          Здесь будут показаны исходные графики и предпросмотр корректировок
+          (без автоприменения).
+        </p>
+      </section>
+    </main>
+
+    <script src="charts.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

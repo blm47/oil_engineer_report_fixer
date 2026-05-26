@@ -1,0 +1,24 @@
+# Критерии каналов для предложения корректировок.
+# Заглушка: реальные правила появятся вместе с реализацией processor.py.
+#
+# Ожидаемая структура (черновая):
+#
+# channels:
+#   - name: "Давление на устье"
+#     source_sheet: "Замес 1 Заказчику"
+#     source_column: "P_wh"
+#     rules:
+#       - type: "clip"
+#         min: 0
+#         max: 1000
+#       - type: "spike"
+#         max_delta: 50
+#
+#   - name: "Расход"
+#     source_sheet: "Анализатор"
+#     source_column: "Q"
+#     rules:
+#       - type: "smooth"
+#         window: 5
+
+channels: []
