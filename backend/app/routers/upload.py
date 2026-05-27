@@ -5,16 +5,21 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import ReportSession, ReportSessionStatus
-from app.schemas import UploadResponse, ChartSeriesResponse, ParseResponse
+from app.schemas import ChartSeriesResponse, ParseResponse
 from app.services.excel_parser import parse_excel_report
-
 
 router = APIRouter(prefix="/sessions", tags=["upload"])
 
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+settings = get_settings()
+
+
+def _get_upload_dir() -> Path:
+    p = Path(settings.upload_dir)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 @router.post("/{session_id}/upload", response_model=ParseResponse)
@@ -30,27 +35,30 @@ async def upload_report(
     if not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Нужен Excel файл .xlsx/.xls")
 
-    # NOTE: scaffold only — actual storage and Excel parsing arrive in a follow-up.
+    # Сохраняем файл в папку, уникальную для сессии
+    session_dir = _get_upload_dir() / str(session_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    saved_path = session_dir / f"{uuid.uuid4().hex}_{file.filename}"
+
     content = await file.read()
     size_bytes = len(content)
 
-    obj.original_filename = file.filename
-    obj.status = ReportSessionStatus.UPLOADED
-    db.add(obj)
-    db.commit()
-    db.refresh(obj)
-
-    file_id = f"{uuid.uuid4()}-{file.filename}"
-    saved_path = UPLOAD_DIR / file_id
-
     with saved_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(content)
 
     try:
         parsed = parse_excel_report(str(saved_path))
     except Exception as exc:
+        obj.status = ReportSessionStatus.FAILED
+        db.add(obj)
+        db.commit()
         raise HTTPException(status_code=400, detail=f"Ошибка парсинга Excel: {exc}") from exc
 
+    obj.original_filename = file.filename
+    obj.status = ReportSessionStatus.PARSED
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
 
     return ParseResponse(
         session_id=obj.id,
@@ -63,19 +71,4 @@ async def upload_report(
             ChartSeriesResponse(name=chart.name, x=chart.x, y=chart.y)
             for chart in parsed.charts
         ],
-    )
-
-
-router = APIRouter(prefix="/api", tags=["upload"])
-
-
-
-
-@router.post("/upload", response_model=ParseResponse)
-async def upload_excel(file: UploadFile = File(...)) -> ParseResponse:
-    
-
-    
-    return ParseResponse(
-        
     )

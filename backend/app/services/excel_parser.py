@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 
-
 SHEET_CUSTOMER = "Замещение (Заказчику)"
 SHEET_ANALYZER = "Замещение (Анализатор)"
+
+# Индексы колонок (0-based) согласно документу критериев
+COL_TIME = 0          # Время
+COL_FLOW_OUT_1 = 4   # Расход на выходе 1 (5-й столбец)
+COL_FLOW_OUT_2 = 5   # Расход на выходе 2 (6-й столбец)
+COL_SUM_OUT_1 = 7    # Сумматор смеси с расхода 1 (8-й столбец)
+COL_SUM_OUT_2 = 8    # Сумматор смеси с расхода 2 (9-й столбец)
+
+CHART_COLUMNS = {
+    "Расход на выходе блендера 1": COL_FLOW_OUT_1,
+    "Расход на выходе блендера 2": COL_FLOW_OUT_2,
+    "Сумматор смеси с расхода 1 на выходе блендера": COL_SUM_OUT_1,
+    "Сумматор смеси с расхода 2 на выходе блендера": COL_SUM_OUT_2,
+}
 
 
 @dataclass
@@ -24,12 +36,6 @@ class ParsedWorkbook:
     charts: list[ParsedSeries]
 
 
-def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(col).strip() for col in df.columns]
-    return df
-
-
 def _find_sheet_name(excel_file: pd.ExcelFile, target: str) -> str | None:
     target_lower = target.strip().lower()
     for sheet in excel_file.sheet_names:
@@ -41,12 +47,25 @@ def _find_sheet_name(excel_file: pd.ExcelFile, target: str) -> str | None:
     return None
 
 
-def _read_sheet(path: str, sheet_name: str) -> pd.DataFrame:
-    df = pd.read_excel(path, sheet_name=sheet_name)
-    df = _normalize_columns(df)
-    df = df.dropna(axis=1, how="all")
-    df = df.dropna(axis=0, how="all")
-    return df.reset_index(drop=True)
+def _read_sheet_raw(path: str, sheet_name: str) -> pd.DataFrame:
+    """Читает лист без заголовков — данные начинаются с какой-то строки."""
+    df = pd.read_excel(path, sheet_name=sheet_name, header=None)
+    # Убираем строки где все значения NaN
+    df = df.dropna(axis=0, how="all").reset_index(drop=True)
+    return df
+
+
+def _find_data_start_row(df: pd.DataFrame) -> int:
+    """Ищет строку, с которой начинаются числовые данные (время > 0)."""
+    time_col = df.iloc[:, COL_TIME]
+    for idx, val in time_col.items():
+        try:
+            f = float(val)
+            if f > 0:
+                return int(idx)
+        except (TypeError, ValueError):
+            continue
+    return 0
 
 
 def _coerce_numeric(series: pd.Series) -> pd.Series:
@@ -55,98 +74,59 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
     cleaned = (
         series.astype(str)
         .str.replace(",", ".", regex=False)
-        .str.replace(" ", "", regex=False)
+        .str.strip()
         .replace({"nan": None, "None": None, "": None})
     )
     return pd.to_numeric(cleaned, errors="coerce")
 
 
-def _find_time_column(df: pd.DataFrame) -> str | None:
-    candidates = [
-        "Время",
-        "время",
-        "Time",
-        "TIME",
-        "HHmmss",
-        "HH:MM:SS",
-    ]
-    for candidate in candidates:
-        if candidate in df.columns:
-            return candidate
+def _parse_time_to_minutes(series: pd.Series) -> list[float]:
+    """
+    Конвертирует время из формата HHmmss (секунды кодированы как дробное число,
+    например 1/60 = 0.01666...) или числового формата в минуты от начала.
+    """
+    numeric = _coerce_numeric(series).fillna(method="ffill").fillna(0.0)
+    values = numeric.tolist()
 
-    for col in df.columns:
-        col_lower = col.lower()
-        if "врем" in col_lower or "time" in col_lower or "hh" in col_lower:
-            return col
-    return None
-
-
-def _series_from_time_column(series: pd.Series, length: int) -> list[float]:
-    if series is None:
-        return [round(i / 60.0, 6) for i in range(length)]
-
-    values = []
-    parsed = pd.to_datetime(series, errors="coerce")
-    if parsed.notna().sum() > max(3, int(length * 0.3)):
-        start = parsed.dropna().iloc[0]
-        for item in parsed:
-            if pd.isna(item):
-                values.append(None)
-            else:
-                values.append(round((item - start).total_seconds() / 60.0, 6))
-        last = 0.0
-        normalized = []
-        for item in values:
-            if item is None:
-                last = round(last + 1 / 60.0, 6)
-                normalized.append(last)
-            else:
-                last = float(item)
-                normalized.append(last)
-        return normalized
-
-    numeric = _coerce_numeric(series)
-    if numeric.notna().sum() > max(3, int(length * 0.3)):
-        vals = numeric.fillna(method="ffill").fillna(method="bfill")
-        return [float(v) for v in vals.tolist()]
-
-    return [round(i / 60.0, 6) for i in range(length)]
+    # Определяем, это HHmmss-like (большие числа типа 120000) или уже дробные секунды
+    max_val = max(abs(v) for v in values if v is not None) if values else 0
+    if max_val > 1000:
+        # Формат HHMMSS → конвертируем в минуты
+        result = []
+        for v in values:
+            v = float(v)
+            hh = int(v) // 10000
+            mm = (int(v) % 10000) // 100
+            ss = int(v) % 100
+            result.append(round(hh * 60 + mm + ss / 60.0, 4))
+        # Нормализуем от нуля
+        if result:
+            start = result[0]
+            result = [round(t - start, 4) for t in result]
+        return result
+    else:
+        # Уже в минутах или дробные значения (0.0166 = 1 сек)
+        start = values[0] if values else 0.0
+        return [round(float(v) - float(start), 4) for v in values]
 
 
-def _pick_numeric_columns(df: pd.DataFrame, exclude: set[str]) -> list[str]:
-    numeric_cols = []
-    for col in df.columns:
-        if col in exclude:
-            continue
-        converted = _coerce_numeric(df[col])
-        non_na_ratio = converted.notna().mean() if len(converted) else 0
-        if non_na_ratio >= 0.5:
-            numeric_cols.append(col)
-    return numeric_cols
-
-
-def _extract_first_four_channels(df: pd.DataFrame) -> list[ParsedSeries]:
-    time_col = _find_time_column(df)
-    x = _series_from_time_column(df[time_col], len(df)) if time_col else [round(i / 60.0, 6) for i in range(len(df))]
-
-    numeric_cols = _pick_numeric_columns(df, exclude={time_col} if time_col else set())
-    first_three = numeric_cols[:3]
-
-    chart_names = [
-        "Давление 1",
-        "Давление 2",
-        "Затрубное давление",
-    ]
+def _extract_charts(df: pd.DataFrame) -> list[ParsedSeries]:
+    time_series = _parse_time_to_minutes(df.iloc[:, COL_TIME])
 
     charts: list[ParsedSeries] = []
-    for idx, col in enumerate(first_three):
-        y = _coerce_numeric(df[col]).fillna(method="ffill").fillna(method="bfill").fillna(0.0)
-        title = chart_names[idx] if idx < len(chart_names) else col
+    for name, col_idx in CHART_COLUMNS.items():
+        if col_idx >= len(df.columns):
+            # колонка отсутствует в файле — добавляем нули
+            charts.append(ParsedSeries(name=name, x=time_series, y=[0.0] * len(time_series)))
+            continue
+
+        raw = df.iloc[:, col_idx]
+        y = _coerce_numeric(raw).fillna(method="ffill").fillna(method="bfill").fillna(0.0)
         charts.append(
             ParsedSeries(
-                name=title,
-                x=x,
-                y=[float(v) for v in y.tolist()],
+                name=name,
+                x=time_series,
+                y=[round(float(v), 4) for v in y.tolist()],
             )
         )
     return charts
@@ -160,23 +140,21 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
 
     if not customer_sheet and not analyzer_sheet:
         raise ValueError(
-            f"Не найдены листы '{SHEET_CUSTOMER}' или '{SHEET_ANALYZER}'"
+            f"Не найдены листы '{SHEET_CUSTOMER}' или '{SHEET_ANALYZER}'. "
+            f"Доступные листы: {excel_file.sheet_names}"
         )
 
+    # Приоритет: Анализатор → Заказчику
     source_sheet = analyzer_sheet or customer_sheet
-    df = _read_sheet(path, source_sheet)
+    df_raw = _read_sheet_raw(path, source_sheet)
 
-    charts = _extract_first_four_channels(df)
+    data_start = _find_data_start_row(df_raw)
+    df = df_raw.iloc[data_start:].reset_index(drop=True)
 
-    time_chart = ParsedSeries(
-        name="Время",
-        x=[float(i) for i in range(len(charts[0].x if charts else df.index))],
-        y=charts[0].x if charts else [round(i / 60.0, 6) for i in range(len(df))],
-    )
+    charts = _extract_charts(df)
 
-    final_charts = [time_chart] + charts
     return ParsedWorkbook(
         customer_sheet=customer_sheet,
         analyzer_sheet=analyzer_sheet,
-        charts=final_charts[:4],
+        charts=charts,
     )
