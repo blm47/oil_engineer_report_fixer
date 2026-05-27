@@ -15,6 +15,7 @@ SHEET_ANALYZER = "Замещение (Анализатор)"
 # Ключ — то что мы хотим отдать фронту, значение — варианты заголовков в файле
 CHANNEL_ALIASES: dict[str, list[str]] = {
     "Расход на выходе блендера 1": [
+        "расход на выходе блендера 1",
         "расход на выходе 1",
         "расход выхода 1",
         "q вых 1",
@@ -25,6 +26,7 @@ CHANNEL_ALIASES: dict[str, list[str]] = {
         "q1",
     ],
     "Расход на выходе блендера 2": [
+        "расход на выходе блендера 2",
         "расход на выходе 2",
         "расход выхода 2",
         "q вых 2",
@@ -233,7 +235,7 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
             f"Доступные листы: {excel_file.sheet_names}"
         )
 
-    source_sheet = analyzer_sheet or customer_sheet
+    source_sheet = customer_sheet
     logger.info("Читаем лист: %s", source_sheet)
 
     # ВАЖНО: НЕ делаем dropna по столбцам — они могут быть "пустыми" только в строках заголовков
@@ -249,6 +251,7 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
         logger.info("  row[%d]: %s", i, row_preview)
 
     header_row, data_start = _find_header_and_data_rows(df_raw)
+    header_row, data_start = 1, 4
     logger.info("header_row=%s  data_start=%d", header_row, data_start)
 
     time_col_idx = _find_time_col_idx(df_raw, header_row)
