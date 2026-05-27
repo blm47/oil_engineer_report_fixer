@@ -239,14 +239,14 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
     source_sheet = analyzer_sheet or customer_sheet
     logger.info("Читаем лист: %s", source_sheet)
 
-    # Читаем без заголовков чтобы видеть всю структуру
+    # ВАЖНО: НЕ делаем dropna по столбцам — они могут быть "пустыми" только в строках заголовков
     df_raw = pd.read_excel(path, sheet_name=source_sheet, header=None)
+    logger.info(df_raw.head().to_json())
+    # Удаляем только полностью пустые СТРОКИ
     df_raw = df_raw.dropna(axis=0, how="all").reset_index(drop=True)
-    df_raw = df_raw.dropna(axis=1, how="all")
 
-    logger.info("Размер листа после очистки NaN: %s строк x %s столбцов", len(df_raw), len(df_raw.columns))
+    logger.info("Размер листа: %d строк x %d столбцов", len(df_raw), len(df_raw.columns))
 
-    # --- диагностика первых строк ---
     for i in range(min(5, len(df_raw))):
         row_preview = [str(v)[:20] for v in df_raw.iloc[i].tolist()[:10]]
         logger.info("  row[%d]: %s", i, row_preview)
@@ -259,11 +259,11 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
 
     logger.info("time_col_idx=%d  col_map=%s", time_col_idx, col_map)
 
-    # Берём только строки данных
     df = df_raw.iloc[data_start:].reset_index(drop=True)
 
     logger.info("Строк данных: %d", len(df))
-    logger.info("Первая строка данных: %s", df.iloc[0].tolist()[:10] if len(df) > 0 else "пусто")
+    if len(df) > 0:
+        logger.info("Первая строка данных col[0..9]: %s", df.iloc[0].tolist()[:10])
 
     # Время
     if time_col_idx < len(df.columns):
@@ -271,19 +271,23 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
     else:
         x = [round(i / 60.0, 4) for i in range(len(df))]
 
-    # Строим серии
     charts: list[ParsedSeries] = []
     for channel_name, col_idx in col_map.items():
         if col_idx >= len(df.columns):
-            logger.warning("Канал '%s': col_idx=%d выходит за пределы (%d столбцов)", channel_name, col_idx, len(df.columns))
+            logger.warning(
+                "Канал '%s': col_idx=%d выходит за пределы (%d столбцов)",
+                channel_name, col_idx, len(df.columns)
+            )
             charts.append(ParsedSeries(name=channel_name, x=x, y=[0.0] * len(x)))
             continue
 
         raw = df.iloc[:, col_idx]
         y_numeric = _coerce_numeric(raw)
-
         non_zero = (y_numeric.dropna() != 0).sum()
-        logger.info("Канал '%s' col[%d]: %d ненулевых значений из %d", channel_name, col_idx, non_zero, len(y_numeric))
+        logger.info(
+            "Канал '%s' col[%d]: %d ненулевых из %d",
+            channel_name, col_idx, non_zero, len(y_numeric)
+        )
 
         y = y_numeric.ffill().bfill().fillna(0.0)
         charts.append(
