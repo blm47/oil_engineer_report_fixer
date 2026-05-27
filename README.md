@@ -76,6 +76,16 @@ docker compose up --build
 docker compose down -v
 ```
 
+### Переменные окружения
+
+`BACKEND_CORS_ORIGINS` принимает несколько форматов:
+
+- JSON-список: `["http://localhost","http://localhost:8080"]`
+- список через запятую: `http://localhost,http://localhost:8080`
+- одиночный URL: `http://localhost`
+- `*` — разрешить любой origin
+- пустое/не задано — используется встроенный дефолт.
+
 ## Текущий статус
 
 Реализован только **первичный скелет**:
