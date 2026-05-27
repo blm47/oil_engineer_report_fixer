@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+import math
 
 import pandas as pd
 
@@ -186,17 +187,15 @@ def _find_time_col_idx(
     return 0
 
 
+def _safe_float_list(values: list) -> list[float]:
+    """Заменяет nan/inf на 0.0 — JSON не принимает эти значения."""
+    return [round(float(v), 4) if math.isfinite(float(v)) else 0.0 for v in values]
+
+
 def _parse_time_to_minutes(series: pd.Series) -> list[float]:
-    """
-    Принимает числовой столбец времени и возвращает минуты от начала.
-    Поддерживает форматы:
-    - дробные минуты (0.01666 = 1 сек, 40.34 = 40 мин)
-    - HHMMSS (120000 = 12:00:00)
-    """
     numeric = _coerce_numeric(series)
-    # ffill/bfill только для пробелов внутри, не трогаем начало
-    numeric = numeric.bfill().ffill()
-    values = [float(v) for v in numeric.tolist()]
+    numeric = numeric.bfill().ffill().fillna(0.0)
+    values = _safe_float_list(numeric.tolist())
 
     if not values:
         return []
@@ -204,7 +203,6 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
     max_val = max(abs(v) for v in values)
 
     if max_val > 1000:
-        # HHMMSS формат
         result = []
         for v in values:
             iv = int(v)
@@ -215,7 +213,6 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
         start = result[0]
         return [round(t - start, 4) for t in result]
     else:
-        # Уже в минутах (или дробных секундах типа 0.01666)
         start = values[0]
         return [round(v - start, 4) for v in values]
 
@@ -290,11 +287,13 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
         )
 
         y = y_numeric.ffill().bfill().fillna(0.0)
+        # Заменяем nan/inf на 0 — JSON не принимает эти значения
+        y_clean = [round(float(v), 4) if math.isfinite(float(v)) else 0.0 for v in y.tolist()]
         charts.append(
             ParsedSeries(
                 name=channel_name,
                 x=x,
-                y=[round(float(v), 4) for v in y.tolist()],
+                y=y_clean,
             )
         )
 
