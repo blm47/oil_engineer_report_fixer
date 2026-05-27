@@ -241,7 +241,7 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
 
     # ВАЖНО: НЕ делаем dropna по столбцам — они могут быть "пустыми" только в строках заголовков
     df_raw = pd.read_excel(path, sheet_name=source_sheet, header=None)
-    logger.info(df_raw.head().to_json())
+    logger.info(df_raw.head().to_dict())
     # Удаляем только полностью пустые СТРОКИ
     df_raw = df_raw.dropna(axis=0, how="all").reset_index(drop=True)
 
