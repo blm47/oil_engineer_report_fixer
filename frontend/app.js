@@ -99,13 +99,14 @@
       const data = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(data.detail || data));
 
-      log("✅ file uploaded", {
-        filename: data.filename,
-        size_kb: Math.round(data.size_bytes / 1024) + " KB",
-        sheets: { customer: data.customer_sheet, analyzer: data.analyzer_sheet },
-        charts: (data.charts || []).length + " каналов",
-        status: data.status,
-      });
+      log("✅ file uploaded", [
+        `Файл: ${data.filename}`,
+        `Размер: ${Math.round(data.size_bytes / 1024)} KB`,
+        `Статус: ${data.status}`,
+        `Лист заказчика: ${data.customer_sheet || "—"}`,
+        `Лист анализатора: ${data.analyzer_sheet || "—"}`,
+        `Каналов: ${(data.charts || []).length}`,
+      ].join("\n"));
 
       if (data.charts && data.charts.length > 0) {
         const figures = data.charts.map((c, i) => ({
