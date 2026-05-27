@@ -54,3 +54,19 @@ class ChartsResponse(BaseModel):
     session_id: int
     figures: list[ChartFigure] = Field(default_factory=list)
     detail: str = "Графики ещё не реализованы — это заглушка."
+
+
+class ChartSeriesResponse(BaseModel):
+    name: str
+    x: list[float]
+    y: list[float]
+
+
+class ParseResponse(BaseModel):
+    session_id: int
+    filename: str
+    size_bytes: int
+    status: ReportSessionStatus
+    customer_sheet: str | None
+    analyzer_sheet: str | None
+    charts: list[ChartSeriesResponse]
