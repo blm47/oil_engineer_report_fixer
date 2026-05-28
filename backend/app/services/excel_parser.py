@@ -56,7 +56,13 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
 
 
 def _normalize(s) -> str:
+    """Нормализация для СРАВНЕНИЯ — нижний регистр."""
     return str(s).strip().replace("\xa0", " ").replace("  ", " ").lower()
+
+
+def _clean(s) -> str:
+    """Очистка для ХРАНЕНИЯ — сохраняет регистр и единицы."""
+    return str(s).strip().replace("\xa0", " ").replace("  ", " ")
 
 
 def _find_sheet_name(excel_file: pd.ExcelFile, target: str) -> str | None:
@@ -141,8 +147,8 @@ def _detect_structure(df_raw: pd.DataFrame) -> dict:
     col_nums = []
 
     for c in range(len(df_raw.columns)):
-        col_names.append(_normalize(df_raw.iloc[name_row_idx, c]))
-        col_units.append(_normalize(df_raw.iloc[unit_row_idx, c]) if unit_row_idx is not None else "")
+        col_names.append(_clean(df_raw.iloc[name_row_idx, c]))
+        col_units.append(_clean(df_raw.iloc[unit_row_idx, c]) if unit_row_idx is not None else "")
         # Номер канала: из row0 если OGRP, иначе просто col_idx+1
         if name_row_idx == 1:
             try:
@@ -221,8 +227,8 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
             continue
 
         channel_num = col_nums[c]
-        name = col_names[c] if col_names[c] not in ("nan", "") else f"Канал {channel_num}"
-        unit = col_units[c] if col_units[c] not in ("nan", "") else ""
+        name = col_names[c] if col_names[c] not in ("nan", "None", "") else f"Канал {channel_num}"
+        unit = col_units[c] if col_units[c] not in ("nan", "None", "") else ""
 
         raw = df.iloc[:, c]
         y_numeric = _coerce_numeric(raw).ffill().bfill().fillna(0.0)
