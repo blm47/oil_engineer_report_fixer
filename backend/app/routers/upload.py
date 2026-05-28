@@ -68,7 +68,13 @@ async def upload_report(
         customer_sheet=parsed.customer_sheet,
         analyzer_sheet=parsed.analyzer_sheet,
         charts=[
-            ChartSeriesResponse(name=chart.name, x=chart.x, y=chart.y, y_label=chart.y_label)
+            ChartSeriesResponse(
+                channel_num=chart.channel_num,
+                name=chart.name,
+                unit=chart.unit,
+                x=chart.x,
+                y=chart.y,
+            )
             for chart in parsed.charts
         ],
     )

@@ -110,9 +110,10 @@
 
       if (data.charts && data.charts.length > 0) {
         const figures = data.charts.map((c, i) => ({
-          id: "ch_" + i,
+          id: "ch_" + (c.channel_num || i),
           title: c.name,
-          y_label: c.y_label || resolveYLabel(c.name),  // берём с бэка, fallback на resolveYLabel
+          channel_num: c.channel_num || 0,
+          unit: c.unit || resolveYLabel(c.name),
           traces: [{ name: "Оригинал", x: c.x, y: c.y }],
         }));
         window.OilCharts.render(els.chartsContainer, figures);

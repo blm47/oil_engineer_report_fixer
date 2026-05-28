@@ -2,57 +2,24 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Конфигурация листов (для старого формата "Замещение")
-# ---------------------------------------------------------------------------
 SHEET_CUSTOMER = "Замещение (Заказчику)"
 SHEET_ANALYZER = "Замещение (Анализатор)"
-
-# ---------------------------------------------------------------------------
-# Целевые каналы: имя для фронта → варианты заголовков в файле (нижний регистр)
-# Порядок важен — первое совпадение побеждает
-# ---------------------------------------------------------------------------
-CHANNEL_TARGETS: list[dict] = [
-    {
-        "name": "Стабилизатор глин концентрация (Основной)",
-        "aliases": ["стабилизатор глин концентрация (основной)", "стаб глин конц осн"],
-        "y_label": "л/м³",
-    },
-    {
-        "name": "Стабилизатор глин расход (Основной)",
-        "aliases": ["стабилизатор глин расход (основной)", "стаб глин расход осн"],
-        "y_label": "л/мин",
-    },
-    {
-        "name": "Стабилизатор глин сумматор (Основной)",
-        "aliases": ["стабилизатор глин сумматор (основной)", "стаб глин сумм осн"],
-        "y_label": "л",
-    },
-    {
-        "name": "Стабилизатор глин концентрация (Резервный)",
-        "aliases": ["стабилизатор глин концентрация (резервный)", "стаб глин конц рез"],
-        "y_label": "л/м³",
-    },
-]
-
-TIME_ALIASES = ["время", "time", "hhmmss", "hh:mm:ss", "hh mm ss"]
+TIME_ALIASES = ["время", "time", "hh:mm:ss", "hhmmss"]
 
 
-# ---------------------------------------------------------------------------
-# Dataclasses
-# ---------------------------------------------------------------------------
 @dataclass
 class ParsedSeries:
+    channel_num: int      # Номер канала из файла (1-based)
     name: str
-    x: list[float]
-    y: list[float]
-    y_label: str = ""
+    unit: str
+    x: list[float] = field(default_factory=list)
+    y: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -88,7 +55,7 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
-def _normalize(s: str) -> str:
+def _normalize(s) -> str:
     return str(s).strip().replace("\xa0", " ").replace("  ", " ").lower()
 
 
@@ -98,94 +65,18 @@ def _find_sheet_name(excel_file: pd.ExcelFile, target: str) -> str | None:
         if _normalize(sheet) == target_norm:
             return sheet
     for sheet in excel_file.sheet_names:
-        if target_norm in _normalize(sheet) or _normalize(sheet) in target_norm:
+        if target_norm in _normalize(sheet):
             return sheet
     return None
 
 
-# ---------------------------------------------------------------------------
-# Определение структуры листа
-# ---------------------------------------------------------------------------
-def _detect_structure(df_raw: pd.DataFrame) -> dict:
-    """
-    Определяет структуру листа:
-    - header_rows: сколько строк заголовков (1, 2 или 3)
-    - data_start: индекс первой строки с данными
-    - col_names: список нормализованных имён колонок
-    - time_col: индекс колонки времени
-    """
-    # Ищем строку где col[0] — числовое значение > 0
-    for data_start in range(min(10, len(df_raw))):
-        val = df_raw.iloc[data_start, 0]
-        try:
-            f = float(str(val).replace(",", ".").strip())
-            if f > 0:
-                break
-        except (TypeError, ValueError):
-            continue
-    else:
-        data_start = 3  # fallback
-
-    # Строки до data_start — заголовки
-    # Собираем имена из последней строки заголовков (обычно это row data_start-1 или data_start-2)
-    # Для OGRP: row[0]=номера, row[1]=названия, row[2]=единицы → берём row[1] как основное имя
-    col_names = [""] * len(df_raw.columns)
-
-    if data_start >= 2:
-        # Берём строку с названиями (предпоследняя перед данными)
-        name_row = data_start - 2
-        unit_row = data_start - 1
-        for col_idx in range(len(df_raw.columns)):
-            name = _normalize(str(df_raw.iloc[name_row, col_idx]))
-            unit = _normalize(str(df_raw.iloc[unit_row, col_idx]))
-            # Склеиваем имя + единицу для более точного поиска
-            col_names[col_idx] = name
-    elif data_start == 1:
-        name_row = 0
-        for col_idx in range(len(df_raw.columns)):
-            col_names[col_idx] = _normalize(str(df_raw.iloc[name_row, col_idx]))
-
-    # Ищем колонку времени
-    time_col = 0
-    for col_idx, name in enumerate(col_names):
-        for alias in TIME_ALIASES:
-            if alias in name:
-                time_col = col_idx
-                break
-
-    logger.info("Структура: data_start=%d, time_col=%d", data_start, time_col)
-    logger.info("Заголовки колонок [0..9]: %s", col_names[:10])
-
-    return {
-        "data_start": data_start,
-        "col_names": col_names,
-        "time_col": time_col,
-    }
-
-
-def _find_channel_col(col_names: list[str], aliases: list[str]) -> int | None:
-    """Ищет индекс колонки по списку псевдонимов."""
-    for col_idx, name in enumerate(col_names):
-        for alias in aliases:
-            if _normalize(alias) in name or name in _normalize(alias):
-                return col_idx
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Парсинг времени
-# ---------------------------------------------------------------------------
 def _parse_time_to_minutes(series: pd.Series) -> list[float]:
     numeric = _coerce_numeric(series).bfill().ffill().fillna(0.0)
     values = _safe_float_list(numeric.tolist())
-
     if not values:
         return []
-
     max_val = max(abs(v) for v in values)
-
     if max_val > 1000:
-        # HHMMSS формат
         result = []
         for v in values:
             iv = int(v)
@@ -196,9 +87,91 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
         start = result[0]
         return [round(t - start, 4) for t in result]
     else:
-        # Уже в минутах (дробные значения типа 0.018 = ~1 сек)
         start = values[0]
         return [round(v - start, 4) for v in values]
+
+
+# ---------------------------------------------------------------------------
+# Определение структуры листа
+# ---------------------------------------------------------------------------
+def _detect_structure(df_raw: pd.DataFrame) -> dict:
+    """
+    Находит строку начала данных и индекс колонки Времени.
+    Поддерживает форматы:
+      - OGRP (row0=номера, row1=названия, row2=единицы, row3=данные)
+      - Замещение (row0=названия, row1=единицы/подпись, row2=данные)
+    """
+    data_start = 3  # fallback
+    for i in range(min(8, len(df_raw))):
+        val = df_raw.iloc[i, 0]
+        try:
+            f = float(str(val).replace(",", ".").strip())
+            if f > 0:
+                data_start = i
+                break
+        except (TypeError, ValueError):
+            continue
+
+    header_rows = data_start  # сколько строк заголовков
+
+    # Строим нормализованные имена колонок из строки с названиями
+    # Для OGRP: row0=номера(1,2,...), row1=названия → берём row1
+    # Для Замещение: row0=названия → берём row0
+    name_row_idx = 0
+    unit_row_idx = None
+
+    if header_rows >= 3:
+        # Проверяем: если row[0] содержит числа типа "1","2" → OGRP-формат
+        first_vals = [str(df_raw.iloc[0, c]).strip() for c in range(min(5, len(df_raw.columns)))]
+        all_numeric = all(v.replace(".", "").isdigit() for v in first_vals if v not in ("nan", ""))
+        if all_numeric:
+            name_row_idx = 1
+            unit_row_idx = 2
+        else:
+            name_row_idx = 0
+            unit_row_idx = 1
+    elif header_rows == 2:
+        name_row_idx = 0
+        unit_row_idx = 1
+    else:
+        name_row_idx = 0
+
+    col_names = []
+    col_units = []
+    col_nums = []
+
+    for c in range(len(df_raw.columns)):
+        col_names.append(_normalize(df_raw.iloc[name_row_idx, c]))
+        col_units.append(_normalize(df_raw.iloc[unit_row_idx, c]) if unit_row_idx is not None else "")
+        # Номер канала: из row0 если OGRP, иначе просто col_idx+1
+        if name_row_idx == 1:
+            try:
+                col_nums.append(int(float(str(df_raw.iloc[0, c]).strip())))
+            except (ValueError, TypeError):
+                col_nums.append(c + 1)
+        else:
+            col_nums.append(c + 1)
+
+    # Ищем колонку времени
+    time_col = 0
+    for c, name in enumerate(col_names):
+        for alias in TIME_ALIASES:
+            if alias in name:
+                time_col = c
+                break
+
+    logger.info(
+        "Структура: data_start=%d, name_row=%d, unit_row=%s, time_col=%d, каналов=%d",
+        data_start, name_row_idx, unit_row_idx, time_col, len(col_names),
+    )
+
+    return {
+        "data_start": data_start,
+        "time_col": time_col,
+        "col_names": col_names,
+        "col_units": col_units,
+        "col_nums": col_nums,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -206,32 +179,31 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
 # ---------------------------------------------------------------------------
 def parse_excel_report(path: str) -> ParsedWorkbook:
     excel_file = pd.ExcelFile(path)
-    logger.info("Листы в файле: %s", excel_file.sheet_names)
+    logger.info("Листы: %s", excel_file.sheet_names)
 
     customer_sheet = _find_sheet_name(excel_file, SHEET_CUSTOMER)
     analyzer_sheet = _find_sheet_name(excel_file, SHEET_ANALYZER)
 
-    # Выбираем источник: Анализатор > Заказчику > первый лист
     if analyzer_sheet:
         source_sheet = analyzer_sheet
     elif customer_sheet:
         source_sheet = customer_sheet
     else:
-        # Новый формат (OGRP и подобные) — берём первый лист
         source_sheet = excel_file.sheet_names[0]
-        logger.info("Листы 'Замещение' не найдены, читаем первый лист: %s", source_sheet)
+        logger.info("Листы 'Замещение' не найдены, читаем: '%s'", source_sheet)
 
     logger.info("Читаем лист: '%s'", source_sheet)
 
     df_raw = pd.read_excel(path, sheet_name=source_sheet, header=None)
     df_raw = df_raw.dropna(axis=0, how="all").reset_index(drop=True)
-
-    logger.info("Размер листа: %d строк x %d колонок", len(df_raw), len(df_raw.columns))
+    logger.info("Размер: %d строк x %d колонок", len(df_raw), len(df_raw.columns))
 
     structure = _detect_structure(df_raw)
     data_start = structure["data_start"]
-    col_names = structure["col_names"]
-    time_col = structure["time_col"]
+    time_col    = structure["time_col"]
+    col_names   = structure["col_names"]
+    col_units   = structure["col_units"]
+    col_nums    = structure["col_nums"]
 
     df = df_raw.iloc[data_start:].reset_index(drop=True)
     logger.info("Строк данных: %d", len(df))
@@ -242,38 +214,35 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
     else:
         x = [round(i / 60.0, 4) for i in range(len(df))]
 
-    # Строим серии по целевым каналам
+    # Строим серии по ВСЕМ каналам, кроме колонки Времени, в порядке col_nums
     charts: list[ParsedSeries] = []
-    for target in CHANNEL_TARGETS:
-        col_idx = _find_channel_col(col_names, target["aliases"])
-
-        if col_idx is None:
-            logger.warning("Канал '%s' не найден по заголовку", target["name"])
-            charts.append(ParsedSeries(
-                name=target["name"],
-                x=x,
-                y=[0.0] * len(x),
-                y_label=target["y_label"],
-            ))
+    for c in range(len(df.columns)):
+        if c == time_col:
             continue
 
-        if col_idx >= len(df.columns):
-            logger.warning("Канал '%s': col_idx=%d за пределами (%d колонок)", target["name"], col_idx, len(df.columns))
-            charts.append(ParsedSeries(name=target["name"], x=x, y=[0.0] * len(x), y_label=target["y_label"]))
-            continue
+        channel_num = col_nums[c]
+        name = col_names[c] if col_names[c] not in ("nan", "") else f"Канал {channel_num}"
+        unit = col_units[c] if col_units[c] not in ("nan", "") else ""
 
-        raw = df.iloc[:, col_idx]
+        raw = df.iloc[:, c]
         y_numeric = _coerce_numeric(raw).ffill().bfill().fillna(0.0)
         non_zero = (y_numeric != 0).sum()
-        logger.info("Канал '%s' col[%d]: %d ненулевых из %d", target["name"], col_idx, non_zero, len(y_numeric))
+
+        if non_zero > 0:
+            logger.info("Канал №%d '%s': %d ненулевых", channel_num, name[:40], non_zero)
 
         charts.append(ParsedSeries(
-            name=target["name"],
+            channel_num=channel_num,
+            name=name,
+            unit=unit,
             x=x,
             y=_safe_float_list(y_numeric.tolist()),
-            y_label=target["y_label"],
         ))
 
+    # Сортируем по номеру канала (порядок из файла)
+    charts.sort(key=lambda s: s.channel_num)
+
+    logger.info("Итого каналов для отрисовки: %d", len(charts))
     return ParsedWorkbook(
         customer_sheet=customer_sheet,
         analyzer_sheet=analyzer_sheet,

@@ -57,10 +57,11 @@ class ChartsResponse(BaseModel):
 
 
 class ChartSeriesResponse(BaseModel):
+    channel_num: int = 0
     name: str
+    unit: str = ""
     x: list[float]
     y: list[float]
-    y_label: str = ""
 
 
 class ParseResponse(BaseModel):
