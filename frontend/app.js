@@ -112,7 +112,7 @@
         const figures = data.charts.map((c, i) => ({
           id: "ch_" + i,
           title: c.name,
-          y_label: resolveYLabel(c.name),
+          y_label: c.y_label || resolveYLabel(c.name),  // берём с бэка, fallback на resolveYLabel
           traces: [{ name: "Оригинал", x: c.x, y: c.y }],
         }));
         window.OilCharts.render(els.chartsContainer, figures);

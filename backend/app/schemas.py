@@ -60,6 +60,7 @@ class ChartSeriesResponse(BaseModel):
     name: str
     x: list[float]
     y: list[float]
+    y_label: str = ""
 
 
 class ParseResponse(BaseModel):

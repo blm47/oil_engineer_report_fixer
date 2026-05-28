@@ -1,80 +1,58 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Конфигурация листов (для старого формата "Замещение")
+# ---------------------------------------------------------------------------
 SHEET_CUSTOMER = "Замещение (Заказчику)"
 SHEET_ANALYZER = "Замещение (Анализатор)"
 
-# Имена искомых каналов (ищем по заголовку, а не по номеру столбца)
-# Ключ — то что мы хотим отдать фронту, значение — варианты заголовков в файле
-CHANNEL_ALIASES: dict[str, list[str]] = {
-    "Расход на выходе блендера 1": [
-        "расход на выходе блендера 1",
-        "расход на выходе 1",
-        "расход выхода 1",
-        "q вых 1",
-        "q_вых1",
-        "flowrate out 1",
-        "flow out 1",
-        "расход1",
-        "q1",
-    ],
-    "Расход на выходе блендера 2": [
-        "расход на выходе блендера 2",
-        "расход на выходе 2",
-        "расход выхода 2",
-        "q вых 2",
-        "q_вых2",
-        "flowrate out 2",
-        "flow out 2",
-        "расход2",
-        "q2",
-    ],
-    "Сумматор смеси с расхода 1 на выходе блендера": [
-        "сумматор смеси с расхода 1",
-        "сумматор 1",
-        "sum1",
-        "sum 1",
-        "объём выход 1",
-        "v вых 1",
-        "totalizer 1",
-        "total out 1",
-    ],
-    "Сумматор смеси с расхода 2 на выходе блендера": [
-        "сумматор смеси с расхода 2",
-        "сумматор 2",
-        "sum2",
-        "sum 2",
-        "объём выход 2",
-        "v вых 2",
-        "totalizer 2",
-        "total out 2",
-    ],
-}
+# ---------------------------------------------------------------------------
+# Целевые каналы: имя для фронта → варианты заголовков в файле (нижний регистр)
+# Порядок важен — первое совпадение побеждает
+# ---------------------------------------------------------------------------
+CHANNEL_TARGETS: list[dict] = [
+    {
+        "name": "Стабилизатор глин концентрация (Основной)",
+        "aliases": ["стабилизатор глин концентрация (основной)", "стаб глин конц осн"],
+        "y_label": "л/м³",
+    },
+    {
+        "name": "Стабилизатор глин расход (Основной)",
+        "aliases": ["стабилизатор глин расход (основной)", "стаб глин расход осн"],
+        "y_label": "л/мин",
+    },
+    {
+        "name": "Стабилизатор глин сумматор (Основной)",
+        "aliases": ["стабилизатор глин сумматор (основной)", "стаб глин сумм осн"],
+        "y_label": "л",
+    },
+    {
+        "name": "Стабилизатор глин концентрация (Резервный)",
+        "aliases": ["стабилизатор глин концентрация (резервный)", "стаб глин конц рез"],
+        "y_label": "л/м³",
+    },
+]
 
-# Запасной вариант — позиции столбцов (0-based) если заголовки не найдены
-# Согласно документу критериев: столбцы 5, 6, 8, 9 → индексы 4, 5, 7, 8
-FALLBACK_COL_INDICES: dict[str, int] = {
-    "Расход на выходе блендера 1": 4,
-    "Расход на выходе блендера 2": 5,
-    "Сумматор смеси с расхода 1 на выходе блендера": 7,
-    "Сумматор смеси с расхода 2 на выходе блендера": 8,
-}
-
-TIME_ALIASES = ["время", "time", "hhmmss", "hh:mm:ss", "hh mm ss", "t,"]
+TIME_ALIASES = ["время", "time", "hhmmss", "hh:mm:ss", "hh mm ss"]
 
 
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
 @dataclass
 class ParsedSeries:
     name: str
     x: list[float]
     y: list[float]
+    y_label: str = ""
 
 
 @dataclass
@@ -85,18 +63,17 @@ class ParsedWorkbook:
 
 
 # ---------------------------------------------------------------------------
-# helpers
+# Утилиты
 # ---------------------------------------------------------------------------
-
-def _find_sheet_name(excel_file: pd.ExcelFile, target: str) -> str | None:
-    target_lower = target.strip().lower()
-    for sheet in excel_file.sheet_names:
-        if str(sheet).strip().lower() == target_lower:
-            return sheet
-    for sheet in excel_file.sheet_names:
-        if target_lower in str(sheet).strip().lower():
-            return sheet
-    return None
+def _safe_float_list(values: list) -> list[float]:
+    result = []
+    for v in values:
+        try:
+            f = float(v)
+            result.append(round(f, 4) if math.isfinite(f) else 0.0)
+        except (TypeError, ValueError):
+            result.append(0.0)
+    return result
 
 
 def _coerce_numeric(series: pd.Series) -> pd.Series:
@@ -111,92 +88,95 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
-def _find_header_and_data_rows(df_raw: pd.DataFrame) -> tuple[int | None, int]:
+def _normalize(s: str) -> str:
+    return str(s).strip().replace("\xa0", " ").replace("  ", " ").lower()
+
+
+def _find_sheet_name(excel_file: pd.ExcelFile, target: str) -> str | None:
+    target_norm = _normalize(target)
+    for sheet in excel_file.sheet_names:
+        if _normalize(sheet) == target_norm:
+            return sheet
+    for sheet in excel_file.sheet_names:
+        if target_norm in _normalize(sheet) or _normalize(sheet) in target_norm:
+            return sheet
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Определение структуры листа
+# ---------------------------------------------------------------------------
+def _detect_structure(df_raw: pd.DataFrame) -> dict:
     """
-    Возвращает (header_row_idx, data_start_idx).
-    Ищем строку, где col[0] является числом > 0 — это первая строка данных.
-    Строка выше неё считается заголовком (если она есть).
+    Определяет структуру листа:
+    - header_rows: сколько строк заголовков (1, 2 или 3)
+    - data_start: индекс первой строки с данными
+    - col_names: список нормализованных имён колонок
+    - time_col: индекс колонки времени
     """
-    for idx in range(len(df_raw)):
-        val = df_raw.iloc[idx, 0]
+    # Ищем строку где col[0] — числовое значение > 0
+    for data_start in range(min(10, len(df_raw))):
+        val = df_raw.iloc[data_start, 0]
         try:
             f = float(str(val).replace(",", ".").strip())
             if f > 0:
-                header_row = idx - 1 if idx > 0 else None
-                return header_row, idx
+                break
         except (TypeError, ValueError):
             continue
-    # Если ничего не нашли — возвращаем 0 как data_start
-    return None, 0
+    else:
+        data_start = 3  # fallback
+
+    # Строки до data_start — заголовки
+    # Собираем имена из последней строки заголовков (обычно это row data_start-1 или data_start-2)
+    # Для OGRP: row[0]=номера, row[1]=названия, row[2]=единицы → берём row[1] как основное имя
+    col_names = [""] * len(df_raw.columns)
+
+    if data_start >= 2:
+        # Берём строку с названиями (предпоследняя перед данными)
+        name_row = data_start - 2
+        unit_row = data_start - 1
+        for col_idx in range(len(df_raw.columns)):
+            name = _normalize(str(df_raw.iloc[name_row, col_idx]))
+            unit = _normalize(str(df_raw.iloc[unit_row, col_idx]))
+            # Склеиваем имя + единицу для более точного поиска
+            col_names[col_idx] = name
+    elif data_start == 1:
+        name_row = 0
+        for col_idx in range(len(df_raw.columns)):
+            col_names[col_idx] = _normalize(str(df_raw.iloc[name_row, col_idx]))
+
+    # Ищем колонку времени
+    time_col = 0
+    for col_idx, name in enumerate(col_names):
+        for alias in TIME_ALIASES:
+            if alias in name:
+                time_col = col_idx
+                break
+
+    logger.info("Структура: data_start=%d, time_col=%d", data_start, time_col)
+    logger.info("Заголовки колонок [0..9]: %s", col_names[:10])
+
+    return {
+        "data_start": data_start,
+        "col_names": col_names,
+        "time_col": time_col,
+    }
 
 
-def _build_column_map(
-    df_raw: pd.DataFrame,
-    header_row: int | None,
-    data_start: int,
-) -> dict[str, int]:
-    """
-    Пытается построить маппинг имя_канала → индекс_столбца по заголовкам.
-    Если заголовков нет, использует fallback по номерам столбцов.
-    """
-    col_map: dict[str, int] = {}
-
-    if header_row is not None:
-        headers = [
-            str(v).strip().lower() if not (
-                isinstance(v, float) and pd.isna(v)
-            ) else ""
-            for v in df_raw.iloc[header_row].tolist()
-        ]
-        logger.info("Заголовки листа: %s", headers)
-
-        for channel_name, aliases in CHANNEL_ALIASES.items():
-            for col_idx, col_header in enumerate(headers):
-                for alias in aliases:
-                    if alias in col_header or col_header in alias:
-                        col_map[channel_name] = col_idx
-                        break
-                if channel_name in col_map:
-                    break
-
-    # Для каналов, которые не нашли по заголовку — используем fallback
-    for channel_name, fallback_idx in FALLBACK_COL_INDICES.items():
-        if channel_name not in col_map:
-            col_map[channel_name] = fallback_idx
-            logger.warning(
-                "Канал '%s' не найден по заголовку, используем fallback col=%d",
-                channel_name,
-                fallback_idx,
-            )
-
-    return col_map
+def _find_channel_col(col_names: list[str], aliases: list[str]) -> int | None:
+    """Ищет индекс колонки по списку псевдонимов."""
+    for col_idx, name in enumerate(col_names):
+        for alias in aliases:
+            if _normalize(alias) in name or name in _normalize(alias):
+                return col_idx
+    return None
 
 
-def _find_time_col_idx(
-    df_raw: pd.DataFrame,
-    header_row: int | None,
-) -> int:
-    """Ищет индекс столбца времени по заголовку, fallback = 0."""
-    if header_row is not None:
-        headers = [
-            str(v).strip().lower() if not (isinstance(v, float) and pd.isna(v)) else ""
-            for v in df_raw.iloc[header_row].tolist()
-        ]
-        for idx, h in enumerate(headers):
-            for alias in TIME_ALIASES:
-                if alias in h or h in alias:
-                    return idx
-    return 0
-
-
-def _safe_float_list(values: list) -> list[float]:
-    """Заменяет nan/inf на 0.0 — JSON не принимает эти значения."""
-    return [round(float(v), 4) if math.isfinite(float(v)) else 0.0 for v in values]
-
-
+# ---------------------------------------------------------------------------
+# Парсинг времени
+# ---------------------------------------------------------------------------
 def _parse_time_to_minutes(series: pd.Series) -> list[float]:
-    numeric = _coerce_numeric(series)
-    numeric = numeric.bfill().ffill().fillna(0.0)
+    numeric = _coerce_numeric(series).bfill().ffill().fillna(0.0)
     values = _safe_float_list(numeric.tolist())
 
     if not values:
@@ -205,6 +185,7 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
     max_val = max(abs(v) for v in values)
 
     if max_val > 1000:
+        # HHMMSS формат
         result = []
         for v in values:
             iv = int(v)
@@ -215,90 +196,83 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
         start = result[0]
         return [round(t - start, 4) for t in result]
     else:
+        # Уже в минутах (дробные значения типа 0.018 = ~1 сек)
         start = values[0]
         return [round(v - start, 4) for v in values]
 
 
 # ---------------------------------------------------------------------------
-# main entry point
+# Основная функция
 # ---------------------------------------------------------------------------
-
 def parse_excel_report(path: str) -> ParsedWorkbook:
     excel_file = pd.ExcelFile(path)
+    logger.info("Листы в файле: %s", excel_file.sheet_names)
 
     customer_sheet = _find_sheet_name(excel_file, SHEET_CUSTOMER)
     analyzer_sheet = _find_sheet_name(excel_file, SHEET_ANALYZER)
 
-    if not customer_sheet and not analyzer_sheet:
-        raise ValueError(
-            f"Не найдены листы '{SHEET_CUSTOMER}' или '{SHEET_ANALYZER}'. "
-            f"Доступные листы: {excel_file.sheet_names}"
-        )
+    # Выбираем источник: Анализатор > Заказчику > первый лист
+    if analyzer_sheet:
+        source_sheet = analyzer_sheet
+    elif customer_sheet:
+        source_sheet = customer_sheet
+    else:
+        # Новый формат (OGRP и подобные) — берём первый лист
+        source_sheet = excel_file.sheet_names[0]
+        logger.info("Листы 'Замещение' не найдены, читаем первый лист: %s", source_sheet)
 
-    source_sheet = customer_sheet
-    logger.info("Читаем лист: %s", source_sheet)
+    logger.info("Читаем лист: '%s'", source_sheet)
 
-    # ВАЖНО: НЕ делаем dropna по столбцам — они могут быть "пустыми" только в строках заголовков
     df_raw = pd.read_excel(path, sheet_name=source_sheet, header=None)
-    logger.info(df_raw.head().to_dict())
-    # Удаляем только полностью пустые СТРОКИ
     df_raw = df_raw.dropna(axis=0, how="all").reset_index(drop=True)
 
-    logger.info("Размер листа: %d строк x %d столбцов", len(df_raw), len(df_raw.columns))
+    logger.info("Размер листа: %d строк x %d колонок", len(df_raw), len(df_raw.columns))
 
-    for i in range(min(5, len(df_raw))):
-        row_preview = [str(v)[:20] for v in df_raw.iloc[i].tolist()[:10]]
-        logger.info("  row[%d]: %s", i, row_preview)
-
-    header_row, data_start = _find_header_and_data_rows(df_raw)
-    header_row, data_start = 1, 4
-    logger.info("header_row=%s  data_start=%d", header_row, data_start)
-
-    time_col_idx = _find_time_col_idx(df_raw, header_row)
-    col_map = _build_column_map(df_raw, header_row, data_start)
-
-    logger.info("time_col_idx=%d  col_map=%s", time_col_idx, col_map)
+    structure = _detect_structure(df_raw)
+    data_start = structure["data_start"]
+    col_names = structure["col_names"]
+    time_col = structure["time_col"]
 
     df = df_raw.iloc[data_start:].reset_index(drop=True)
-
     logger.info("Строк данных: %d", len(df))
-    if len(df) > 0:
-        logger.info("Первая строка данных col[0..9]: %s", df.iloc[0].tolist()[:10])
 
     # Время
-    if time_col_idx < len(df.columns):
-        x = _parse_time_to_minutes(df.iloc[:, time_col_idx])
+    if time_col < len(df.columns):
+        x = _parse_time_to_minutes(df.iloc[:, time_col])
     else:
         x = [round(i / 60.0, 4) for i in range(len(df))]
 
+    # Строим серии по целевым каналам
     charts: list[ParsedSeries] = []
-    for channel_name, col_idx in col_map.items():
+    for target in CHANNEL_TARGETS:
+        col_idx = _find_channel_col(col_names, target["aliases"])
+
+        if col_idx is None:
+            logger.warning("Канал '%s' не найден по заголовку", target["name"])
+            charts.append(ParsedSeries(
+                name=target["name"],
+                x=x,
+                y=[0.0] * len(x),
+                y_label=target["y_label"],
+            ))
+            continue
+
         if col_idx >= len(df.columns):
-            logger.warning(
-                "Канал '%s': col_idx=%d выходит за пределы (%d столбцов)",
-                channel_name, col_idx, len(df.columns)
-            )
-            charts.append(ParsedSeries(name=channel_name, x=x, y=[0.0] * len(x)))
+            logger.warning("Канал '%s': col_idx=%d за пределами (%d колонок)", target["name"], col_idx, len(df.columns))
+            charts.append(ParsedSeries(name=target["name"], x=x, y=[0.0] * len(x), y_label=target["y_label"]))
             continue
 
         raw = df.iloc[:, col_idx]
-        y_numeric = _coerce_numeric(raw)
-        non_zero = (y_numeric.dropna() != 0).sum()
-        logger.info(
-            "Канал '%s' col[%d]: %d ненулевых из %d",
-            channel_name, col_idx, non_zero, len(y_numeric)
-        )
+        y_numeric = _coerce_numeric(raw).ffill().bfill().fillna(0.0)
+        non_zero = (y_numeric != 0).sum()
+        logger.info("Канал '%s' col[%d]: %d ненулевых из %d", target["name"], col_idx, non_zero, len(y_numeric))
 
-        y = y_numeric.ffill().bfill().fillna(0.0)
-        # Заменяем nan/inf на 0 — JSON не принимает эти значения
-        y_clean = [round(float(v), 4) if math.isfinite(float(v)) else 0.0 for v in y.tolist()]
-        charts.append(
-            ParsedSeries(
-                name=channel_name,
-                x=x,
-                y=y_clean,
-            )
-        )
+        charts.append(ParsedSeries(
+            name=target["name"],
+            x=x,
+            y=_safe_float_list(y_numeric.tolist()),
+            y_label=target["y_label"],
+        ))
 
     return ParsedWorkbook(
         customer_sheet=customer_sheet,
