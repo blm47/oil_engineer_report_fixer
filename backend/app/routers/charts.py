@@ -65,6 +65,7 @@ def get_charts(session_id: int, db: Session = Depends(get_db)) -> ChartsResponse
             ChartFigure(
                 id=chart_id,
                 title=chart.name,
+                unit=chart.unit,    # ← ДОБАВИТЬ
                 traces=[
                     ChartTrace(name="Оригинал", x=chart.x, y=chart.y)
                 ],

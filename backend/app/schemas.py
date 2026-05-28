@@ -47,6 +47,7 @@ class ChartTrace(BaseModel):
 class ChartFigure(BaseModel):
     id: str
     title: str
+    unit: str = ""          # ← ДОБАВИТЬ
     traces: list[ChartTrace] = Field(default_factory=list)
 
 

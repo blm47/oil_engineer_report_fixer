@@ -112,8 +112,8 @@
         const figures = data.charts.map((c, i) => ({
           id: "ch_" + (c.channel_num || i),
           title: c.name,
-          channel_num: c.channel_num || 0,
-          y_label: c.unit || resolveYLabel(c.name),   // ← было: unit: c.unit
+          channel_num: c.channel_num || (i + 1),
+          y_label: (c.unit && c.unit !== "nan") ? c.unit : resolveYLabel(c.name),
           traces: [{ name: "Оригинал", x: c.x, y: c.y }],
         }));
         window.OilCharts.render(els.chartsContainer, figures);
@@ -132,7 +132,8 @@
       if (!res.ok) throw new Error(JSON.stringify(data));
       const figures = (data.figures || []).map(fig => ({
         ...fig,
-        y_label: resolveYLabel(fig.title),
+        // unit приходит с сервера; resolveYLabel — только fallback
+        y_label: (fig.unit && fig.unit !== "nan") ? fig.unit : resolveYLabel(fig.title),
       }));
       log("📊 charts fetched", figures.length + " графиков");
       window.OilCharts.render(els.chartsContainer, figures);
