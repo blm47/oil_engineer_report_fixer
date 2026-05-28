@@ -108,15 +108,15 @@ def _detect_structure(df_raw: pd.DataFrame) -> dict:
       - Замещение (row0=названия, row1=единицы/подпись, row2=данные)
     """
     data_start = 3  # fallback
-    for i in range(min(8, len(df_raw))):
-        val = df_raw.iloc[i, 0]
-        try:
-            f = float(str(val).replace(",", ".").strip())
-            if f > 0:
-                data_start = i
-                break
-        except (TypeError, ValueError):
-            continue
+    # for i in range(min(8, len(df_raw))):
+    #     val = df_raw.iloc[i, 0]
+    #     try:
+    #         f = float(str(val).replace(",", ".").strip())
+    #         if f > 0:
+    #             data_start = i
+    #             break
+    #     except (TypeError, ValueError):
+    #         continue
 
     header_rows = data_start  # сколько строк заголовков
 
