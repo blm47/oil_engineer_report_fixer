@@ -113,7 +113,7 @@
           id: "ch_" + (c.channel_num || i),
           title: c.name,
           channel_num: c.channel_num || 0,
-          unit: c.unit || resolveYLabel(c.name),
+          y_label: c.unit || resolveYLabel(c.name),   // ← было: unit: c.unit
           traces: [{ name: "Оригинал", x: c.x, y: c.y }],
         }));
         window.OilCharts.render(els.chartsContainer, figures);

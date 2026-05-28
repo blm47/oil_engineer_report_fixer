@@ -116,8 +116,7 @@
         ? fig.channel_num
         : (figIdx + 1);
 
-      const rawUnit = fig.unit || fig.y_label || "";
-      const yLabel  = (rawUnit && rawUnit !== "nan" && rawUnit !== "undefined") ? rawUnit : "";
+      const yLabel = (fig.y_label && fig.y_label !== "nan") ? fig.y_label : "";
 
       const rawName  = fig.title || "";
       const safeName = (rawName && rawName !== "nan") ? rawName : ("Канал " + channelNum);
