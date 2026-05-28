@@ -109,13 +109,21 @@
       ].join("\n"));
 
       if (data.charts && data.charts.length > 0) {
-        const figures = data.charts.map((c, i) => ({
-          id: "ch_" + (c.channel_num || i),
-          title: c.name,
-          channel_num: c.channel_num || (i + 1),
-          y_label: (c.unit && c.unit !== "nan") ? c.unit : resolveYLabel(c.name),
-          traces: [{ name: "Оригинал", x: c.x, y: c.y }],
-        }));
+        const figures = data.charts.map((c, i) => {
+          const traces = [{ name: "Оригинал", x: c.x, y: c.y }];
+          // Добавляем линию исправления: если коррекция есть — берём y_corrected, иначе дублируем y
+          const yFix = (c.y_corrected && c.y_corrected.length > 0) ? c.y_corrected : c.y;
+          traces.push({ name: "Исправление", x: c.x, y: yFix });
+
+          return {
+            id: "ch_" + (c.channel_num || i),
+            title: c.name,
+            channel_num: c.channel_num || 0,
+            y_label: (c.unit && c.unit !== "nan") ? c.unit : resolveYLabel(c.name),
+            correction_applied: c.correction_applied || false,
+            traces,
+          };
+        });
         window.OilCharts.render(els.chartsContainer, figures);
         log("📊 charts rendered", figures.length + " графиков");
       }

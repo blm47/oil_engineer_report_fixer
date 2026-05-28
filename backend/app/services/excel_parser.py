@@ -15,11 +15,13 @@ TIME_ALIASES = ["время", "time", "hh:mm:ss", "hhmmss"]
 
 @dataclass
 class ParsedSeries:
-    channel_num: int      # Номер канала из файла (1-based)
+    channel_num: int
     name: str
     unit: str
     x: list[float] = field(default_factory=list)
     y: list[float] = field(default_factory=list)
+    y_corrected: list[float] = field(default_factory=list)
+    correction_applied: bool = False
 
 
 @dataclass
@@ -97,6 +99,43 @@ def _parse_time_to_minutes(series: pd.Series) -> list[float]:
         return [round(v - start, 4) for v in values]
 
 
+# ---------------------------------------------------------------------------
+# Критерии
+# ---------------------------------------------------------------------------
+
+# Каналы, к которым применяется критерий "рост не более 5% за шаг"
+CRITERION_MAX_STEP_CHANNELS = {
+    "расход на входе блендера 1",
+    "расход на входе блендера 2",
+}
+MAX_STEP_RATIO = 0.05  # 5%
+
+
+def _criterion_max_step(y: list[float], max_ratio: float = MAX_STEP_RATIO) -> tuple[list[float], bool]:
+    """
+    Критерий: каждое следующее значение не должно превышать предыдущее более чем на max_ratio.
+    Если превышение найдено — возвращает сглаженный ряд и True.
+    Исправление: заменяем выброс предыдущим значением * (1 + max_ratio).
+    """
+    if not y:
+        return y, False
+
+    corrected = list(y)
+    changed = False
+
+    for i in range(1, len(corrected)):
+        prev = corrected[i - 1]
+        curr = corrected[i]
+        if prev > 0 and curr > prev * (1 + max_ratio):
+            corrected[i] = round(prev * (1 + max_ratio), 4)
+            changed = True
+        elif prev <= 0 and curr > abs(prev) + 0.001:
+            # если предыдущее ≤ 0, не ограничиваем
+            pass
+
+    return corrected, changed
+
+    
 # ---------------------------------------------------------------------------
 # Определение структуры листа
 # ---------------------------------------------------------------------------
@@ -237,12 +276,25 @@ def parse_excel_report(path: str) -> ParsedWorkbook:
         if non_zero > 0:
             logger.info("Канал №%d '%s': %d ненулевых", channel_num, name[:40], non_zero)
 
+        y_list = _safe_float_list(y_numeric.tolist())
+
+        # Применяем критерий если канал в списке
+        name_lower = name.lower().strip()
+        y_corrected: list[float] = []
+        correction_applied = False
+        if name_lower in CRITERION_MAX_STEP_CHANNELS:
+            y_corrected, correction_applied = _criterion_max_step(y_list)
+            if correction_applied:
+                logger.info("Критерий 'max_step' сработал для канала '%s'", name)
+
         charts.append(ParsedSeries(
             channel_num=channel_num,
             name=name,
             unit=unit,
             x=x,
-            y=_safe_float_list(y_numeric.tolist()),
+            y=y_list,
+            y_corrected=y_corrected,
+            correction_applied=correction_applied,
         ))
 
     # Сортируем по номеру канала (порядок из файла)

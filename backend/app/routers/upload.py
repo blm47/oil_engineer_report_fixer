@@ -74,6 +74,8 @@ async def upload_report(
                 unit=chart.unit,
                 x=chart.x,
                 y=chart.y,
+                y_corrected=chart.y_corrected,
+                correction_applied=chart.correction_applied,
             )
             for chart in parsed.charts
         ],

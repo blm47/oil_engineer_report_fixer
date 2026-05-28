@@ -51,7 +51,6 @@
     displaylogo:            false,
   };
 
-  // Всплывающий тост над кнопкой
   function showToast(anchorEl, message) {
     const existing = anchorEl.parentElement.querySelector(".oil-toast");
     if (existing) existing.remove();
@@ -76,18 +75,12 @@
       "z-index:999",
     ].join(";");
 
-    const wrapper = anchorEl.parentElement;
-    wrapper.style.position = "relative";
-    wrapper.appendChild(toast);
+    anchorEl.parentElement.style.position = "relative";
+    anchorEl.parentElement.appendChild(toast);
 
-    // Плавное появление
     requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        toast.style.opacity = "1";
-      });
+      requestAnimationFrame(function () { toast.style.opacity = "1"; });
     });
-
-    // Через 1.5 сек — плавное исчезновение
     setTimeout(function () {
       toast.style.opacity = "0";
       setTimeout(function () { toast.remove(); }, 400);
@@ -104,7 +97,6 @@
       return;
     }
 
-    // 2 графика на строку
     container.style.cssText = [
       "display:grid",
       "grid-template-columns:1fr 1fr",
@@ -116,43 +108,49 @@
         ? fig.channel_num
         : (figIdx + 1);
 
-      const yLabel = (fig.y_label && fig.y_label !== "nan") ? fig.y_label : "";
-
+      const yLabel   = (fig.y_label && fig.y_label !== "nan") ? fig.y_label : "";
       const rawName  = fig.title || "";
       const safeName = (rawName && rawName !== "nan") ? rawName : ("Канал " + channelNum);
-
-      // Заголовок: №N — Полное название канала (единица)
       const titleText = "№" + channelNum + " \u2014 " + safeName
         + (yLabel ? " (" + yLabel + ")" : "");
 
-      // ── Карточка канала ────────────────────────────────────────────────
+      const correctionApplied = fig.correction_applied === true;
+
+      // ── Карточка ──────────────────────────────────────────────────────
       const card = document.createElement("div");
+      card.title = safeName + (yLabel ? " (" + yLabel + ")" : ""); // тултип при наведении
       card.style.cssText = [
         "background:#181b22",
-        "border:1px solid #23262d",
+        "border:1px solid " + (correctionApplied ? "#1a3a2a" : "#23262d"),
         "border-radius:8px",
         "padding:10px 10px 8px 10px",
         "display:flex",
         "flex-direction:column",
         "gap:8px",
+        "cursor:default",
       ].join(";");
       container.appendChild(card);
 
-      // ── Plotly ─────────────────────────────────────────────────────────
+      // ── Plotly div ─────────────────────────────────────────────────────
       const plotDiv = document.createElement("div");
       plotDiv.id = "chart-" + channelNum + "-" + figIdx;
       plotDiv.style.cssText = "width:100%; height:300px;";
       card.appendChild(plotDiv);
 
-      const origData = (fig.traces || []).find(function (t) {
-        return !t.name || t.name === "Оригинал";
-      }) || (fig.traces || [])[0] || { x: [], y: [] };
+      // Трейсы — оригинал всегда из fig.traces[0]
+      const origTrace = (fig.traces || [])[0] || { x: [], y: [] };
+      // Исправление — из fig.traces[1] если есть, иначе дублируем оригинал
+      const fixTrace  = (fig.traces || [])[1] || origTrace;
 
-      const htSuffix = yLabel ? " " + yLabel : "";
+      const htSuffix  = yLabel ? " " + yLabel : "";
+      const fixColor  = correctionApplied ? "#06d6a0" : "#2a4a3a";
+      const fixDash   = correctionApplied ? "solid"   : "dot";
+      const fixLabel  = correctionApplied ? "Исправление" : "Исправление (заглушка)";
+
       const traces = [
         {
-          x:    origData.x,
-          y:    origData.y,
+          x:    origTrace.x,
+          y:    origTrace.y,
           name: "Оригинал",
           mode: "lines",
           type: "scatter",
@@ -160,23 +158,38 @@
           hovertemplate: "%{y:.3f}" + htSuffix + "<br>%{x:.2f} мин<extra>Оригинал</extra>",
         },
         {
-          x:    origData.x,
-          y:    origData.y,
-          name: "Исправление (заглушка)",
+          x:    fixTrace.x,
+          y:    fixTrace.y,
+          name: fixLabel,
           mode: "lines",
           type: "scatter",
-          line: { width: 1.5, color: "#06d6a0", dash: "dot" },
-          hovertemplate: "%{y:.3f}" + htSuffix + "<br>%{x:.2f} мин<extra>Исправление</extra>",
+          line: { width: correctionApplied ? 2 : 1, color: fixColor, dash: fixDash },
+          hovertemplate: "%{y:.3f}" + htSuffix + "<br>%{x:.2f} мин<extra>" + fixLabel + "</extra>",
         },
       ];
 
       window.Plotly.newPlot(plotDiv, traces, makeLayout(titleText, yLabel), PLOTLY_CONFIG);
 
-      // ── Кнопка ────────────────────────────────────────────────────────
+      // ── Статус + кнопка ───────────────────────────────────────────────
       const btnRow = document.createElement("div");
-      btnRow.style.cssText = "display:flex; justify-content:flex-end;";
+      btnRow.style.cssText = [
+        "display:flex",
+        "justify-content:space-between",
+        "align-items:center",
+        "gap:8px",
+      ].join(";");
       card.appendChild(btnRow);
 
+      // Статусная метка
+      const statusMsg = document.createElement("span");
+      statusMsg.style.cssText = "font-size:11px; color:" +
+        (correctionApplied ? "#06d6a0" : "#4a5568") + ";";
+      statusMsg.textContent = correctionApplied
+        ? "\u26a0\ufe0f Критерий сработал — показано предложение по исправлению"
+        : "\u2705 Данные канала корректны";
+      btnRow.appendChild(statusMsg);
+
+      // Кнопка
       const btn = document.createElement("button");
       btn.textContent = "Применить исправление";
       btn.style.cssText = [
@@ -188,15 +201,17 @@
         "cursor:pointer",
         "font-size:12px",
         "font-weight:500",
+        "white-space:nowrap",
+        "flex-shrink:0",
         "transition:background 0.15s, color 0.15s",
       ].join(";");
       btn.addEventListener("mouseenter", function () {
         btn.style.background = "#333a47";
-        btn.style.color = "#c9d1d9";
+        btn.style.color      = "#c9d1d9";
       });
       btn.addEventListener("mouseleave", function () {
         btn.style.background = "#2a2f3a";
-        btn.style.color = "#9aa0a6";
+        btn.style.color      = "#9aa0a6";
       });
       btn.addEventListener("click", function () {
         showToast(btn, "Метод не реализован");

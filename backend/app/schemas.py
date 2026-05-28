@@ -63,6 +63,8 @@ class ChartSeriesResponse(BaseModel):
     unit: str = ""
     x: list[float]
     y: list[float]
+    y_corrected: list[float] = Field(default_factory=list)  # пустой = нет коррекции
+    correction_applied: bool = False  # True = критерий сработал
 
 
 class ParseResponse(BaseModel):
