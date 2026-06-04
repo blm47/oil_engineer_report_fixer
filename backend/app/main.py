@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 app = FastAPI(
-    title="Oil Engineer Report Fixer API",
+    title="Oil Engineer Report Validator API",
     version="0.1.0",
     description=(
         "Backend для разбора и предпросмотра корректировок Excel-отчётов по операциям ГРП."
